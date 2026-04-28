@@ -4,7 +4,6 @@ Repository for the genomic analyses accompanying the manuscript: "Chromosomal in
 Overview
 
 This repository contains the scripts, pipelines, and code used to analyze the rapid ecological speciation between two sister Carex species (C. boryana and C. borbonica) on Réunion Island. The workflow includes de novo chromosome-level genome assembly, structural variant (SV) identification, whole-genome population genetics, introgression analysis, landscape genomics (RDA), and tests for purifying selection.
-Data Availability
 
   
 Repository Structure & Workflow
