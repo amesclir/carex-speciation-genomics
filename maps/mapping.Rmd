@@ -1,0 +1,1235 @@
+---
+title: "boryanaborbonicamapping"
+author: "marcial"
+date: "2025-11-17"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+
+
+library(ape)
+library(maps) 
+library(phytools) # Still needed for plot.phylo
+library(plotrix) # Used for floating.pie
+
+# --- 1. DATA DEFINITION ---
+# Assuming these files are available in the environment
+mydata <- read.csv("Carexboryanaborbonicacoord.csv")
+coords_data <- mydata[, c("Longitud", "Latitud")]
+colnames(coords_data) <- c("long", "lat")
+rownames(coords_data) <- mydata$IND
+tree <- read.tree("cbor.tree")
+cat("Data loaded.\n")
+
+# --- 2. DATA PROCESSING (Individuals) ---
+common_ids <- intersect(tree$tip.label, mydata$IND)
+tree_sub <- keep.tip(tree, common_ids)
+Ntip <- Ntip(tree_sub) 
+cat("Tree subset to", Ntip, "common tips.\n")
+
+# Subset individual data, ensuring the necessary clade columns are included
+tree_data <- mydata[mydata$IND %in% tree_sub$tip.label, ]
+tree_data$IND <- as.character(tree_data$IND)
+tree_data$POP <- as.character(tree_data$POP)
+# Required columns for coloring and proportions
+tree_data$SPECIESclade2 <- as.character(tree_data$SPECIESclade2) # Used for tips and pie proportions
+
+cat("Individual-level data processing complete.\n")
+
+
+# --- 3. DATA AGGREGATION (Populations for Pie Charts) ---
+cat("Aggregating data by population to calculate SPECIESclade2 proportions for pie charts...\n")
+
+# Define our consistent color scheme
+pie_clades <- c("C_borbonica", "C_boryana", "hybrid1", "hybrid2")
+pie_colors <- c("C_borbonica" = "cyan", "C_boryana" = "orange", "hybrid1" = "cyan3","hybrid1" = "orange3")
+
+# 3a. Calculate the count of each clade (SPECIESclade2) per population
+clade_counts <- table(tree_data$POP, tree_data$SPECIESclade2)
+
+# Ensure all 3 categories are present in the table columns (fill with 0 if missing)
+missing_clades <- setdiff(pie_clades, colnames(clade_counts))
+if(length(missing_clades) > 0) {
+    missing_data <- matrix(0, nrow = nrow(clade_counts), ncol = length(missing_clades), 
+                           dimnames = list(rownames(clade_counts), missing_clades))
+    clade_counts <- cbind(clade_counts, missing_data)
+}
+# Order the columns consistently for the pie chart function
+clade_proportions_matrix <- clade_counts[, pie_clades] 
+
+# 3b. Convert counts to proportions (row-wise sum to 1)
+clade_proportions_matrix <- t(apply(clade_proportions_matrix, 1, function(x) x / sum(x)))
+
+# 3c. Get coordinates for each population (using the first individual's coordinates as the center)
+pop_coords_matched <- do.call(
+    rbind, 
+    by(tree_data, tree_data$POP, function(x) x[1, c("Longitud", "Latitud")])
+)
+rownames(pop_coords_matched) <- names(by(tree_data, tree_data$POP, function(x) x[1, c("Longitud", "Latitud")]))
+pop_coords_matched <- pop_coords_matched[rownames(clade_proportions_matrix), ]
+
+
+cat("Population-level data aggregation for pie charts complete.\n")
+
+
+# --- 4. PLOTTING (V66: Final Aesthetics) ---
+
+# TIGHTENED LIMITS to zoom in on the island 
+reunion_limits_long <- c(55.2, 55.8)
+reunion_limits_lat <- c(-21.35, -20.85)
+
+pdf("phylogeography_reunion_v66_FINAL_AESTHETICS.pdf", width = 11, height = 7)
+
+# --- Set up a 2-panel layout (EQUAL WIDTHS) ---
+layout(matrix(c(1, 2), 1, 2, byrow = TRUE), widths = c(0.5, 0.5))
+par(oma = c(0, 0, 0, 0)) 
+
+# --- PANEL 1: THE TREE (Colored by SPECIESclade2) ---
+par(mar = c(4, 1, 2, 3)) 
+cat("Plotting Panel 1: Phylogram (Colored by SPECIESclade2)...\n")
+
+plot.phylo(
+    tree_sub,
+    type = "phylogram",
+    direction = "rightwards",
+    show.tip.label = FALSE, 
+    no.margin = TRUE,
+    edge.color = "gray40", 
+    edge.width = 2          
+)
+
+# Get plot coordinates from ape's environment
+last_plot <- get("last_plot.phylo", envir = .PlotPhyloEnv) 
+
+# Get tip order for plotting
+tip_order_indices <- last_plot$edge[last_plot$edge[, 2] <= Ntip, 2]
+tip_labels_in_plot_order <- tree_sub$tip.label[tip_order_indices]
+
+# Get the SPECIESclade2 for each tip, in plot order
+plot_order_clade2 <- tree_data$SPECIESclade2[match(tip_labels_in_plot_order, tree_data$IND)]
+plot_order_colors <- pie_colors[plot_order_clade2] # Use pie_colors for Clade2
+
+# Add colored dots to tips (Individual SPECIESclade2 status)
+points(
+    last_plot$xx[1:Ntip],
+    last_plot$yy[1:Ntip],
+    pch = 19, 
+    col = plot_order_colors, # COLORED by SPECIESclade2
+    cex = 0.8
+)
+
+# --- PANEL 2: THE MAP (Pie Charts based on SPECIESclade2 Proportions) ---
+par(mar = c(1, 1, 2, 2)) 
+cat("Plotting Panel 2: Map of Reunion with Pie Charts...\n")
+
+# Calculate aspect ratio for map stability 
+mean_lat <- mean(reunion_limits_lat)
+aspect_ratio <- 1/cos(mean_lat * pi/180)
+
+# 1. Establish the clean, frameless plot area with fixed limits and ASPECT RATIO
+plot(
+    NA, NA, 
+    xlim = reunion_limits_long, 
+    ylim = reunion_limits_lat, 
+    axes = FALSE,         
+    xlab = "", ylab = "", main = "", 
+    xaxs = "i", yaxs = "i", 
+    asp = aspect_ratio # STABILITY FIX
+)
+rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "aliceblue") # Water background
+
+# 2. Draw the island shape using add = TRUE
+maps::map(
+    "world", 
+    "Reunion",
+    fill = TRUE,
+    col = "gray90", 
+    add = TRUE
+)
+
+# 3. Add the POPULATION pie charts
+pie_radius <- 0.006 # HALVED SIZE 
+
+for(i in 1:nrow(clade_proportions_matrix)) {
+    pop_name <- rownames(clade_proportions_matrix)[i]
+    
+    # Get coordinates and proportions
+    long <- pop_coords_matched[pop_name, "Longitud"]
+    lat <- pop_coords_matched[pop_name, "Latitud"]
+    proportions <- clade_proportions_matrix[i, ]
+    
+    # Draw the pie chart 
+    if (sum(proportions) > 0) {
+        plotrix::floating.pie(
+            xpos = long,      
+            ypos = lat,       
+            x = proportions,  
+            radius = pie_radius, 
+            col = pie_colors 
+        )
+    }
+}
+
+# 4. Add a simple legend (Bottom Right, inside the map panel)
+legend(
+    x = "bottomright", 
+    legend = names(pie_colors),
+    fill = pie_colors, 
+    border = "black",  
+    cex = 0.8,
+    bg = "white",
+    title = "Species Proportions", # SIMPLIFIED TITLE
+    xpd = TRUE 
+)
+
+
+dev.off()
+layout(1) 
+par(oma = c(0, 0, 0, 0), mar = c(5, 4, 4, 2))
+
+cat("\n✅✅✅ Plot V66: FINAL AESTHETICS has been generated.\n")
+cat("Pie chart size has been reduced and the legend title simplified.\n")
+cat("Output file is 'phylogeography_reunion_v66_FINAL_AESTHETICS.pdf'.\n")
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+library(ape)
+
+library(maps) 
+
+library(phytools) # Still needed for plot.phylo
+
+library(plotrix) # Used for floating.pie
+
+
+# --- 1. DATA DEFINITION ---
+
+# Assuming these files are available in the environment
+
+mydata <- read.csv("Carexboryanaborbonicacoord.csv")
+
+coords_data <- mydata[, c("Longitud", "Latitud")]
+
+colnames(coords_data) <- c("long", "lat")
+
+rownames(coords_data) <- mydata$IND
+
+tree <- read.tree("cbor.tree")
+
+cat("Data loaded.\n")
+
+
+# --- 2. DATA PROCESSING (Individuals) ---
+
+common_ids <- intersect(tree$tip.label, mydata$IND)
+
+tree_sub <- keep.tip(tree, common_ids)
+
+Ntip <- Ntip(tree_sub) 
+
+cat("Tree subset to", Ntip, "common tips.\n")
+
+
+# Subset individual data, ensuring the necessary clade columns are included
+
+tree_data <- mydata[mydata$IND %in% tree_sub$tip.label, ]
+
+tree_data$IND <- as.character(tree_data$IND)
+
+tree_data$POP <- as.character(tree_data$POP)
+
+# Required columns for coloring and proportions
+
+tree_data$SPECIESclade2 <- as.character(tree_data$SPECIESclade2) # Used for tips and pie proportions
+
+
+cat("Individual-level data processing complete.\n")
+
+
+
+# --- 3. DATA AGGREGATION (Populations for Pie Charts) ---
+
+cat("Aggregating data by population to calculate SPECIESclade2 proportions for pie charts...\n")
+
+
+# Define our consistent color scheme
+
+pie_clades <- c("C_borbonica", "C_boryana", "hybrid1", "hybrid2")
+pie_colors <- c("C_borbonica" = "cyan", "C_boryana" = "orange", "hybrid1" = "cyan3","hybrid1" = "orange3")
+
+
+# 3a. Calculate the count of each clade (SPECIESclade2) per population
+
+clade_counts <- table(tree_data$POP, tree_data$SPECIESclade2)
+
+
+# Ensure all 3 categories are present in the table columns (fill with 0 if missing)
+
+missing_clades <- setdiff(pie_clades, colnames(clade_counts))
+
+if(length(missing_clades) > 0) {
+
+    missing_data <- matrix(0, nrow = nrow(clade_counts), ncol = length(missing_clades), 
+
+                           dimnames = list(rownames(clade_counts), missing_clades))
+
+    clade_counts <- cbind(clade_counts, missing_data)
+
+}
+
+# Order the columns consistently for the pie chart function
+
+clade_proportions_matrix <- clade_counts[, pie_clades] 
+
+
+# 3b. Convert counts to proportions (row-wise sum to 1)
+
+clade_proportions_matrix <- t(apply(clade_proportions_matrix, 1, function(x) x / sum(x)))
+
+
+# 3c. Get coordinates for each population (using the first individual's coordinates as the center)
+
+pop_coords_matched <- do.call(
+
+    rbind, 
+
+    by(tree_data, tree_data$POP, function(x) x[1, c("Longitud", "Latitud")])
+
+)
+
+rownames(pop_coords_matched) <- names(by(tree_data, tree_data$POP, function(x) x[1, c("Longitud", "Latitud")]))
+
+pop_coords_matched <- pop_coords_matched[rownames(clade_proportions_matrix), ]
+
+
+
+cat("Population-level data aggregation for pie charts complete.\n")
+
+
+
+# --- 4. PLOTTING (V66: Final Aesthetics) ---
+
+
+# TIGHTENED LIMITS to zoom in on the island 
+
+reunion_limits_long <- c(55.2, 55.8)
+
+reunion_limits_lat <- c(-21.35, -20.85)
+
+
+pdf("phylogeography_reunion_v66_FINAL_AESTHETICS.pdf", width = 11, height = 7)
+
+
+# --- Set up a 2-panel layout (EQUAL WIDTHS) ---
+
+layout(matrix(c(1, 2), 1, 2, byrow = TRUE), widths = c(0.5, 0.5))
+
+par(oma = c(0, 0, 0, 0)) 
+
+
+# --- PANEL 1: THE TREE (Colored by SPECIESclade2) ---
+
+par(mar = c(4, 1, 2, 3)) 
+
+cat("Plotting Panel 1: Phylogram (Colored by SPECIESclade2)...\n")
+
+
+plot.phylo(
+
+    tree_sub,
+
+    type = "phylogram",
+
+    direction = "rightwards",
+
+    show.tip.label = FALSE, 
+
+    no.margin = TRUE,
+
+    edge.color = "gray40", 
+
+    edge.width = 2          
+
+)
+
+
+# Get plot coordinates from ape's environment
+
+last_plot <- get("last_plot.phylo", envir = .PlotPhyloEnv) 
+
+
+# Get tip order for plotting
+
+tip_order_indices <- last_plot$edge[last_plot$edge[, 2] <= Ntip, 2]
+
+tip_labels_in_plot_order <- tree_sub$tip.label[tip_order_indices]
+
+
+# Get the SPECIESclade2 for each tip, in plot order
+
+plot_order_clade2 <- tree_data$SPECIESclade2[match(tip_labels_in_plot_order, tree_data$IND)]
+
+plot_order_colors <- pie_colors[plot_order_clade2] # Use pie_colors for Clade2
+
+
+# Add colored dots to tips (Individual SPECIESclade2 status)
+
+points(
+
+    last_plot$xx[1:Ntip],
+
+    last_plot$yy[1:Ntip],
+
+    pch = 19, 
+
+    col = plot_order_colors, # COLORED by SPECIESclade2
+
+    cex = 0.8
+
+)
+
+
+# --- PANEL 2: THE MAP (Pie Charts based on SPECIESclade2 Proportions) ---
+
+par(mar = c(1, 1, 2, 2)) 
+
+cat("Plotting Panel 2: Map of Reunion with Pie Charts...\n")
+
+
+# Calculate aspect ratio for map stability 
+
+mean_lat <- mean(reunion_limits_lat)
+
+aspect_ratio <- 1/cos(mean_lat * pi/180)
+
+
+# 1. Establish the clean, frameless plot area with fixed limits and ASPECT RATIO
+
+plot(
+
+    NA, NA, 
+
+    xlim = reunion_limits_long, 
+
+    ylim = reunion_limits_lat, 
+
+    axes = FALSE,         
+
+    xlab = "", ylab = "", main = "", 
+
+    xaxs = "i", yaxs = "i", 
+
+    asp = aspect_ratio # STABILITY FIX
+
+)
+
+rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "aliceblue") # Water background
+
+
+# 2. Draw the island shape using add = TRUE
+
+maps::map(
+
+    "world", 
+
+    "Reunion",
+
+    fill = TRUE,
+
+    col = "gray90", 
+
+    add = TRUE
+
+)
+
+
+# 3. Add the POPULATION pie charts
+
+pie_radius <- 0.006 # HALVED SIZE 
+
+
+for(i in 1:nrow(clade_proportions_matrix)) {
+
+    pop_name <- rownames(clade_proportions_matrix)[i]
+
+    
+
+    # Get coordinates and proportions
+
+    long <- pop_coords_matched[pop_name, "Longitud"]
+
+    lat <- pop_coords_matched[pop_name, "Latitud"]
+
+    proportions <- clade_proportions_matrix[i, ]
+
+    
+
+    # Draw the pie chart 
+
+    if (sum(proportions) > 0) {
+
+        plotrix::floating.pie(
+
+            xpos = long,      
+
+            ypos = lat,       
+
+            x = proportions,  
+
+            radius = pie_radius, 
+
+            col = pie_colors 
+
+        )
+
+    }
+
+}
+
+
+# 4. Add a simple legend (Bottom Right, inside the map panel)
+
+legend(
+
+    x = "bottomright", 
+
+    legend = names(pie_colors),
+
+    fill = pie_colors, 
+
+    border = "black",  
+
+    cex = 0.8,
+
+    bg = "white",
+
+    title = "Species Proportions", # SIMPLIFIED TITLE
+
+    xpd = TRUE 
+
+)
+
+
+
+dev.off()
+
+layout(1) 
+
+par(oma = c(0, 0, 0, 0), mar = c(5, 4, 4, 2))
+
+
+cat("\n✅✅✅ Plot V66: FINAL AESTHETICS has been generated.\n")
+
+ cat("Pie chart size has been reduced and the legend title simplified.\n")
+
+cat("Output file is 'phylogeography_reunion_v66_FINAL_AESTHETICS.pdf'.\n")
+
+```
+
+
+```{r}
+
+
+# R SCRIPT TO GENERATE PHYLOGEOGRAPHY PLOT (Phylogeny + Map with Pie Charts)
+#
+# FIXES:
+# 1. TIGHTER COORDINATE LIMITS: Adjusted xlim/ylim to a tighter range (e.g., 55.1 to 55.9) 
+#    to force the island to fill the map panel visually, making it appear much larger. 
+# 2. Reverted zoom_level to 12, as the visual zoom is now controlled by the coordinate limits.
+# 3. Maintained larger pie chart radius (r=0.007) for visibility.
+#
+# Requires: ape, phytools, ggplot2, ggmap, scatterpie, gridExtra, dplyr, ggtree, treeio
+
+# --- LOAD LIBRARIES ---
+library(ape)
+library(phytools) 
+library(ggplot2)      
+library(ggmap)        
+library(scatterpie)    
+library(gridExtra)    
+library(dplyr)        
+library(ggtree)       
+library(treeio)       
+library(maps)         
+cat("All required libraries loaded.\n")
+
+# --- 1. DATA DEFINITION ---
+# Assuming these files are available in the environment
+mydata <- read.csv("Carexboryanaborbonicacoord.csv")
+tree <- read.tree("cbor.tree")
+cat("Data loaded.\n")
+
+# --- 2. DATA CLEANING AND PREPARATION ---
+cat("Starting data cleaning and preparation...\n")
+
+pie_clades <- c("C_borbonica", "C_boryana", "hybrid1", "hybrid2")
+pie_colors <- c("C_borbonica" = "cyan", "C_boryana" = "orange", "hybrid1" = "cyan3","hybrid1" = "orange3")
+
+# 2a. Match data with the tree
+common_ids <- intersect(tree$tip.label, mydata$IND)
+if (length(common_ids) == 0) stop("No common IDs found between tree and data.")
+tree_sub <- keep.tip(tree, common_ids)
+
+# 2b. Subset and aggressively clean individual data
+tree_data <- mydata[mydata$IND %in% tree_sub$tip.label, ]
+tree_data <- tree_data[!is.na(tree_data$POP) & !is.na(tree_data$SPECIESclade2) & !is.na(tree_data$Longitud) & !is.na(tree_data$Latitud), ]
+tree_data$IND <- as.character(tree_data$IND)
+tree_data$SPECIESclade2 <- factor(tree_data$SPECIESclade2)
+tree_data$Longitud <- as.numeric(tree_data$Longitud)
+tree_data$Latitud <- as.numeric(tree_data$Latitud)
+tree_data <- droplevels(tree_data) 
+
+# Ensure the clade data frame for ggtree has the same order as tree tips
+tree_data_for_ggtree <- tree_data %>%
+    dplyr::select(IND, SPECIESclade2) %>%
+    dplyr::left_join(data.frame(IND = tree_sub$tip.label), by = "IND") %>%
+    dplyr::rename(label = IND) 
+    
+cat("Tree and individual data prepared for ggtree.\n")
+
+# --- 3. DATA AGGREGATION (Populations for Pie Charts) ---
+pop_names <- unique(tree_data$POP)
+clade_counts_full <- matrix(0, nrow = length(pop_names), ncol = length(pie_clades), 
+                           dimnames = list(pop_names, pie_clades))
+
+for (pop in pop_names) {
+    pop_subset <- subset(tree_data, POP == pop)
+    for (clade in pop_subset$SPECIESclade2) {
+        if (clade %in% pie_clades) {
+            clade_counts_full[pop, clade] <- clade_counts_full[pop, clade] + 1
+        }
+    }
+}
+
+clade_proportions_matrix <- t(apply(clade_counts_full, 1, function(x) {
+    total <- sum(x)
+    return(if (total == 0 || is.na(total)) rep(0, length(x)) else x / total)
+}))
+
+pop_coords_matched <- tree_data %>%
+    dplyr::select(POP, Longitud, Latitud) %>%
+    dplyr::distinct(POP, .keep_all = TRUE) %>%
+    as.data.frame()
+
+pop_data_df <- data.frame(
+    pop = pop_names,
+    long = pop_coords_matched$Longitud[match(pop_names, pop_coords_matched$POP)],
+    lat = pop_coords_matched$Latitud[match(pop_names, pop_coords_matched$POP)],
+    clade_proportions_matrix
+)
+pop_data_df <- pop_data_df[rowSums(pop_data_df[, pie_clades]) > 0, ]
+pop_data_df$long <- as.numeric(pop_data_df$long)
+pop_data_df$lat <- as.numeric(pop_data_df$lat)
+cat("Population data prepared for map pie charts.\n")
+
+
+# --- 4. MAP FETCH (Attempt Google Satellite) ---
+# TIGHTER LIMITS for maximum island size within the plot panel
+reunion_limits_long <- c(55.1, 55.9) # Tighter Longitude for visual zoom
+reunion_limits_lat <- c(-21.4, -20.75) # Tighter Latitude for visual zoom
+reunion_map <- NULL
+zoom_level <- 10 # Reverted zoom, as visual size is now controlled by limits
+api_key <- ""
+
+cat(paste("Fetching Google Satellite map tiles (Zoom", zoom_level, ") with maximized island focus..."))
+tryCatch({
+    if (api_key != "") { ggmap::register_google(key = api_key) }
+    # Calculate new center based on expanded limits
+    center_lon <- mean(reunion_limits_long) 
+    center_lat <- mean(reunion_limits_lat)
+    
+    reunion_map <- ggmap::get_googlemap(
+        center = c(lon = center_lon, lat = center_lat),
+        zoom = zoom_level, 
+        maptype = 'satellite', 
+        color = "color"
+    )
+    cat(" SUCCESS.\n")
+}, error = function(e) {
+    cat(paste(" FAILED. Using a plain ggplot canvas for the map. Details:", e$message, "\n"))
+    reunion_map <<- NULL 
+})
+
+
+# --- 5. GGPLOT2 PLOT GENERATION ---
+
+# 5a. Panel 1: Phylogeny Plot (using ggtree)
+cat("Generating Panel 1: ggtree plot...\n")
+p_tree <- ggtree::ggtree(tree_sub, layout = "rectangular", right = TRUE, color = "gray40", size = 1) %<+% tree_data_for_ggtree +
+    ggtree::geom_tippoint(
+        aes(color = SPECIESclade2), 
+        size = 2
+    ) +
+    scale_color_manual(
+        values = pie_colors, 
+        name = "Species Clade"
+    ) +
+    # Remove plot title
+    ggplot2::labs(title = NULL) + 
+    ggplot2::theme(
+        legend.position = "none", 
+        plot.margin = unit(c(0.5, 0.2, 0.5, 0.5), "cm")
+    )
+
+
+# 5b. Panel 2: Map Plot (using ggmap or blank canvas)
+cat("Generating Panel 2: Map plot...\n")
+if (!is.null(reunion_map) && inherits(reunion_map, "ggmap")) {
+    p_map <- ggmap(reunion_map, darken = c(0.1, "black")) 
+} else {
+    # Fallback if map fetch fails
+    p_map <- ggplot() + 
+        geom_rect(
+            aes(xmin = reunion_limits_long[1], xmax = reunion_limits_long[2], 
+                ymin = reunion_limits_lat[1], ymax = reunion_limits_lat[2]), 
+            fill = "lightgray", color = "black"
+        )
+}
+
+p_map <- p_map +
+    geom_scatterpie(
+        data = pop_data_df, 
+        aes(x = long, y = lat, r = 0.007), # Maintained larger pie radius
+        cols = pie_clades, 
+        color = "white",
+        alpha = 0.9,
+        linewidth = 0.5
+    ) +
+    scale_fill_manual(
+        values = pie_colors, 
+        name = "Species Proportions"
+    ) +
+    # Use the tighter limits to force the island to fill the entire plot area
+    labs(x = NULL, y = NULL, title = NULL) + 
+    theme_void() +
+    coord_fixed(
+        xlim = reunion_limits_long, 
+        ylim = reunion_limits_lat, 
+        expand = FALSE, 
+        ratio = 1/cos(mean(reunion_limits_lat) * pi/180)
+    ) + 
+    theme(
+        legend.position = c(0.85, 0.85), 
+        legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5), 
+        legend.title = element_text(face = "bold"), 
+        axis.text = element_blank(), # Removed axis ticks/numbers
+        axis.title = element_blank(), # Removed axis titles (latitude/longitude)
+        plot.margin = unit(c(0.5, 0.5, 0.5, 0.2), "cm") 
+    )
+
+
+# -----------------------------------------------------------------
+# STEP 6: ARRANGE AND PRINT THE FINAL IMAGE
+# -----------------------------------------------------------------
+
+cat("Combining and printing plots using grid.arrange...\n")
+pdf("phylogeography_ggtree_v11_MAX_ISLAND.pdf", width = 11, height = 7)
+
+gridExtra::grid.arrange(
+    p_tree, 
+    p_map, 
+    ncol = 2, 
+    widths = c(0.4, 0.6) # Map retains 60% of the width
+)
+
+dev.off()
+cat("\n✅ Final Plot: Generated plot using TIGHTER coordinate limits to maximize the island's visual size within the map panel.\n")
+cat("Output file is 'phylogeography_ggtree_v11_MAX_ISLAND.pdf'.\n")
+
+```
+
+
+```{r}
+# R SCRIPT TO GENERATE PHYLOGEOGRAPHY PLOT (Phylogeny + Map with Pie Charts)
+#
+# FIXES:
+# 1. LEGEND LABELS: Updated 'scale_fill_manual' and 'scale_color_manual' to use 
+#    friendly labels: "C. borbonica", "C. boryana", and "Mixed" instead of 
+#    the internal variable names.
+# 2. Maintained the maximized island view (tighter coordinate limits) from v11.
+#
+# Requires: ape, phytools, ggplot2, ggmap, scatterpie, gridExtra, dplyr, ggtree, treeio
+
+# --- LOAD LIBRARIES ---
+library(ape)
+library(phytools) 
+library(ggplot2)      
+library(ggmap)        
+library(scatterpie)    
+library(gridExtra)    
+library(dplyr)        
+library(ggtree)       
+library(treeio)       
+library(maps)         
+cat("All required libraries loaded.\n")
+
+# --- 1. DATA DEFINITION ---
+# Assuming these files are available in the environment
+mydata <- read.csv("Carexboryanaborbonicacoord.csv")
+tree <- read.tree("cbor.tree")
+cat("Data loaded.\n")
+
+# --- 2. DATA CLEANING AND PREPARATION ---
+cat("Starting data cleaning and preparation...\n")
+
+# Define internal clade names and their desired plot colors
+pie_clades <- c("C_borbonica", "C_boryana", "hybrid1", "hybrid2")
+pie_colors <- c("C_borbonica" = "cyan", "C_boryana" = "orange", "hybrid1" = "cyan4","hybrid2" = "orange4")
+
+# Define the final labels for the legend
+legend_labels <- c("C. borbonica", "C. boryana", "int. C. borbonica", "int. C. boryana") 
+names(legend_labels) <- pie_clades # Map the internal names to the desired labels
+
+# 2a. Match data with the tree
+common_ids <- intersect(tree$tip.label, mydata$IND)
+if (length(common_ids) == 0) stop("No common IDs found between tree and data.")
+tree_sub <- keep.tip(tree, common_ids)
+
+# 2b. Subset and aggressively clean individual data
+tree_data <- mydata[mydata$IND %in% tree_sub$tip.label, ]
+tree_data <- tree_data[!is.na(tree_data$POP) & !is.na(tree_data$SPECIESclade2) & !is.na(tree_data$Longitud) & !is.na(tree_data$Latitud), ]
+tree_data$IND <- as.character(tree_data$IND)
+tree_data$SPECIESclade2 <- factor(tree_data$SPECIESclade2)
+tree_data$Longitud <- as.numeric(tree_data$Longitud)
+tree_data$Latitud <- as.numeric(tree_data$Latitud)
+tree_data <- droplevels(tree_data) 
+
+# Ensure the clade data frame for ggtree has the same order as tree tips
+tree_data_for_ggtree <- tree_data %>%
+    dplyr::select(IND, SPECIESclade2) %>%
+    dplyr::left_join(data.frame(IND = tree_sub$tip.label), by = "IND") %>%
+    dplyr::rename(label = IND) 
+    
+cat("Tree and individual data prepared for ggtree.\n")
+
+# --- 3. DATA AGGREGATION (Populations for Pie Charts) ---
+pop_names <- unique(tree_data$POP)
+clade_counts_full <- matrix(0, nrow = length(pop_names), ncol = length(pie_clades), 
+                           dimnames = list(pop_names, pie_clades))
+
+for (pop in pop_names) {
+    pop_subset <- subset(tree_data, POP == pop)
+    for (clade in pop_subset$SPECIESclade2) {
+        if (clade %in% pie_clades) {
+            clade_counts_full[pop, clade] <- clade_counts_full[pop, clade] + 1
+        }
+    }
+}
+
+clade_proportions_matrix <- t(apply(clade_counts_full, 1, function(x) {
+    total <- sum(x)
+    return(if (total == 0 || is.na(total)) rep(0, length(x)) else x / total)
+}))
+
+pop_coords_matched <- tree_data %>%
+    dplyr::select(POP, Longitud, Latitud) %>%
+    dplyr::distinct(POP, .keep_all = TRUE) %>%
+    as.data.frame()
+
+pop_data_df <- data.frame(
+    pop = pop_names,
+    long = pop_coords_matched$Longitud[match(pop_names, pop_coords_matched$POP)],
+    lat = pop_coords_matched$Latitud[match(pop_names, pop_coords_matched$POP)],
+    clade_proportions_matrix
+)
+pop_data_df <- pop_data_df[rowSums(pop_data_df[, pie_clades]) > 0, ]
+pop_data_df$long <- as.numeric(pop_data_df$long)
+pop_data_df$lat <- as.numeric(pop_data_df$lat)
+cat("Population data prepared for map pie charts.\n")
+
+
+# --- 4. MAP FETCH (Attempt Google Satellite) ---
+# TIGHTER LIMITS for maximum island size within the plot panel
+reunion_limits_long <- c(55.1, 55.9) 
+reunion_limits_lat <- c(-21.4, -20.75) 
+reunion_map <- NULL
+zoom_level <- 10 # Adequate zoom level
+api_key <- "AIzaSyBAAyFPIOj1TKBWik1J0o5mg6mfVhdyJak" # Using empty string as provided for runtime key injection
+
+cat(paste("Fetching Google Satellite map tiles (Zoom", zoom_level, ") with maximized island focus..."))
+tryCatch({
+    if (api_key != "") { ggmap::register_google(key = api_key) }
+    # Calculate new center based on expanded limits
+    center_lon <- mean(reunion_limits_long) 
+    center_lat <- mean(reunion_limits_lat)
+    
+    reunion_map <- ggmap::get_googlemap(
+        center = c(lon = center_lon, lat = center_lat),
+        zoom = zoom_level, 
+        maptype = 'satellite', 
+        color = "color"
+    )
+    cat(" SUCCESS.\n")
+}, error = function(e) {
+    cat(paste(" FAILED. Using a plain ggplot canvas for the map. Details:", e$message, "\n"))
+    reunion_map <<- NULL 
+})
+
+
+# --- 5. GGPLOT2 PLOT GENERATION ---
+
+# 5a. Panel 1: Phylogeny Plot (using ggtree)
+cat("Generating Panel 1: ggtree plot...\n")
+p_tree <- ggtree::ggtree(tree_sub, layout = "rectangular", right = TRUE, color = "gray40", size = 1) %<+% tree_data_for_ggtree +
+    ggtree::geom_tippoint(
+        aes(color = SPECIESclade2), 
+        size = 2
+    ) +
+    # Use the friendly labels for the tree tip colors
+    scale_color_manual(
+        values = pie_colors, 
+        name = "Species Clade",
+        labels = legend_labels # <-- APPLIED NEW LABELS
+    ) +
+    # Remove plot title
+    ggplot2::labs(title = NULL) + 
+    ggplot2::theme(
+        legend.position = "none", 
+        plot.margin = unit(c(0.5, 0.2, 0.5, 0.5), "cm")
+    )
+
+
+# 5b. Panel 2: Map Plot (using ggmap or blank canvas)
+cat("Generating Panel 2: Map plot...\n")
+if (!is.null(reunion_map) && inherits(reunion_map, "ggmap")) {
+    p_map <- ggmap(reunion_map, darken = c(0.1, "black")) 
+} else {
+    # Fallback if map fetch fails
+    p_map <- ggplot() + 
+        geom_rect(
+            aes(xmin = reunion_limits_long[1], xmax = reunion_limits_long[2], 
+                ymin = reunion_limits_lat[1], ymax = reunion_limits_lat[2]), 
+            fill = "lightgray", color = "black"
+        )
+}
+
+p_map <- p_map +
+    geom_scatterpie(
+        data = pop_data_df, 
+        aes(x = long, y = lat, r = 0.007), # Maintained larger pie radius
+        cols = pie_clades, 
+        color = "white",
+        alpha = 0.9,
+        linewidth = 0.5
+    ) +
+    # Use the friendly labels for the map pie chart fills
+    scale_fill_manual(
+        values = pie_colors, 
+        name = "Species Proportions",
+        labels = legend_labels # <-- APPLIED NEW LABELS
+    ) +
+    # Use the tighter limits to force the island to fill the entire plot area
+    labs(x = NULL, y = NULL, title = NULL) + 
+    theme_void() +
+    coord_fixed(
+        xlim = reunion_limits_long, 
+        ylim = reunion_limits_lat, 
+        expand = FALSE, 
+        ratio = 1/cos(mean(reunion_limits_lat) * pi/180)
+    ) + 
+    theme(
+        legend.position = c(0.85, 0.85), 
+        legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5), 
+        legend.title = element_text(face = "bold"), 
+        axis.text = element_blank(), 
+        axis.title = element_blank(), 
+        plot.margin = unit(c(0.5, 0.5, 0.5, 0.2), "cm") 
+    )
+
+
+# -----------------------------------------------------------------
+# STEP 6: ARRANGE AND PRINT THE FINAL IMAGE
+# -----------------------------------------------------------------
+
+cat("Combining and printing plots using grid.arrange...\n")
+pdf("phylogeography_ggtree_v12_FINAL.pdf", width = 11, height = 7)
+
+gridExtra::grid.arrange(
+    p_tree, 
+    p_map, 
+    ncol = 2, 
+    widths = c(0.4, 0.6) # Map retains 60% of the width
+)
+
+dev.off()
+
+
+png("phylogeography_ggtree_v12_FINALlow.png", 
+    width = 11, 
+    height = 7, 
+    units = "in", # Set the units to inches
+    res = 100)    # Set resolution to 300 DPI for high quality
+
+# --- Plot the arrangement ---
+# Arrange the tree and the map using the defined widths
+gridExtra::grid.arrange(
+    p_tree, 
+    p_map, 
+    ncol = 2, 
+    widths = c(0.4, 0.6) # Map retains 60% of the width
+)
+
+# --- Close the plotting device ---
+# This step is CRUCIAL to save the file to disk.
+dev.off() 
+
+cat("\n✅ Final Plot: Generated plot with maximized island size and updated legend labels.\n")
+cat("Output file is 'phylogeography_ggtree_v12_FINAL.pdf'.\n")
+```
+
+
+
+```{r}
+
+# R SCRIPT TO GENERATE PHYLOGEOGRAPHY PLOT (Phylogeny + Map with Pie Charts)
+#
+# FIXES:
+# 1. ERROR FIX: Solved 'undefined columns selected' by using cbind for data frame creation.
+# 2. DIAGNOSIS: Prints a count of low-support nodes to the Console.
+# 3. VISUALS: Uses Transparency (Alpha) + Dashes for logic display.
+#
+# Requires: ape, phytools, ggplot2, ggmap, scatterpie, gridExtra, dplyr, ggtree, treeio
+
+# --- LOAD LIBRARIES ---
+library(ape)
+library(phytools) 
+library(ggplot2)      
+library(ggmap)        
+library(scatterpie)    
+library(gridExtra)    
+library(dplyr)        
+library(ggtree)        
+library(treeio)        
+library(maps)          
+cat("All required libraries loaded.\n")
+
+# --- 1. DATA DEFINITION ---
+mydata <- read.csv("Carexboryanaborbonicacoord.csv")
+tree <- read.tree("cbor.tree") 
+cat("Data loaded.\n")
+
+# --- 2. DATA CLEANING AND PREPARATION ---
+cat("Starting data cleaning and preparation...\n")
+
+# Define internal clade names and their desired plot colors
+pie_clades <- c("C_borbonica1","C_borbonica2", "hybrid1", "C_boryana1", "C_boryana2","C_boryana3","C_boryana4","C_boryana5", "hybrid2")
+pie_colors <- c("C_borbonica1"="cyan","C_borbonica2"="cyan3", "hybrid1"="cyan4", "C_boryana1"="lightgoldenrod1", "C_boryana2"="gold","C_boryana3"="orange","C_boryana4"="orange3","C_boryana5"="orange4", "hybrid2"="brown4")
+
+legend_labels <- c("borbonica PF", "borbonica LM", "borbonica int.", "boryana PF", "boryana TF", "boryana LM", "boryana PN", "boryana RE",  "boryana int.") 
+names(legend_labels) <- pie_clades
+
+# 2a. Match data with the tree
+common_ids <- intersect(tree$tip.label, mydata$IND)
+if (length(common_ids) == 0) stop("No common IDs found between tree and data.")
+tree_sub <- keep.tip(tree, common_ids)
+
+# 2b. Subset data
+tree_data <- mydata[mydata$IND %in% tree_sub$tip.label, ]
+tree_data <- tree_data[!is.na(tree_data$POP) & !is.na(tree_data$SPECIESclade3) & !is.na(tree_data$Longitud) & !is.na(tree_data$Latitud), ]
+tree_data$IND <- as.character(tree_data$IND)
+tree_data$SPECIESclade3 <- factor(tree_data$SPECIESclade3)
+tree_data$Longitud <- as.numeric(tree_data$Longitud)
+tree_data$Latitud <- as.numeric(tree_data$Latitud)
+tree_data <- droplevels(tree_data) 
+
+tree_data_for_ggtree <- tree_data %>%
+  dplyr::select(IND, SPECIESclade3) %>%
+  dplyr::left_join(data.frame(IND = tree_sub$tip.label), by = "IND") %>%
+  dplyr::rename(label = IND) 
+  
+cat("Tree and individual data prepared for ggtree.\n")
+
+# --- 2c. (DIAGNOSTIC & FIX) PROCESS SUPPORT VALUES ---
+cat("Processing support values (Threshold = 95)...\n")
+
+# Convert to tibble for processing
+d_tree <- as_tibble(tree_sub)
+
+# Extract Bootstrap and Logic
+d_tree <- d_tree %>%
+  mutate(
+    # Extract number before slash
+    bootstrap_val = suppressWarnings(as.numeric(gsub("/.*", "", label))),
+    # Default everything to High Support (Solid / Opaque)
+    line_type = "solid",
+    line_alpha = 1.0 
+  )
+
+# Apply Logic: If bootstrap exists and is < 95
+low_support_indices <- !is.na(d_tree$bootstrap_val) & d_tree$bootstrap_val < 95
+
+# Set Low Support to Dashed and Faint (Alpha 0.4)
+d_tree$line_type[low_support_indices] <- "dashed"
+d_tree$line_alpha[low_support_indices] <- 0.4
+
+# DIAGNOSTIC CHECK
+count_low <- sum(low_support_indices)
+cat(" DIAGNOSTIC: Low Support Nodes Found (<95): ", count_low, "\n")
+
+# Convert back to treedata
+p_tree_with_support <- as.treedata(d_tree)
+
+
+# --- 3. DATA AGGREGATION (Populations for Pie Charts) ---
+# FIX: Rewrote this section to prevent "undefined columns selected" error
+cat("Aggregating population data...\n")
+
+pop_names <- unique(tree_data$POP)
+clade_counts_full <- matrix(0, nrow = length(pop_names), ncol = length(pie_clades), 
+                            dimnames = list(pop_names, pie_clades))
+
+for (pop in pop_names) {
+  pop_subset <- subset(tree_data, POP == pop)
+  for (clade in pop_subset$SPECIESclade3) {
+    if (clade %in% pie_clades) {
+      clade_counts_full[pop, clade] <- clade_counts_full[pop, clade] + 1
+    }
+  }
+}
+
+clade_proportions_matrix <- t(apply(clade_counts_full, 1, function(x) {
+  total <- sum(x)
+  return(if (total == 0 || is.na(total)) rep(0, length(x)) else x / total)
+}))
+
+# Explicitly ensure the matrix has the correct column names before binding
+colnames(clade_proportions_matrix) <- pie_clades
+
+pop_coords_matched <- tree_data %>%
+  dplyr::select(POP, Longitud, Latitud) %>%
+  dplyr::distinct(POP, .keep_all = TRUE) %>%
+  as.data.frame()
+
+# FIX: Create base dataframe first
+pop_base <- data.frame(
+  pop = pop_names,
+  long = as.numeric(pop_coords_matched$Longitud[match(pop_names, pop_coords_matched$POP)]),
+  lat = as.numeric(pop_coords_matched$Latitud[match(pop_names, pop_coords_matched$POP)])
+)
+
+# FIX: Use cbind to attach the proportions matrix as explicit columns
+# converting matrix to data.frame ensures names are preserved.
+pop_data_df <- cbind(pop_base, as.data.frame(clade_proportions_matrix))
+
+# Now this subsetting will work because the columns definitely exist
+pop_data_df <- pop_data_df[rowSums(pop_data_df[, pie_clades]) > 0, ]
+
+cat("Population data prepared for map pie charts.\n")
+
+
+# --- 4. MAP FETCH ---
+reunion_limits_long <- c(55.1, 55.9) 
+reunion_limits_lat <- c(-21.4, -20.75) 
+reunion_map <- NULL
+zoom_level <- 10 
+api_key <- "AIzaSyBAAyFPIOj1TKBWik1J0o5mg6mfVhdyJak" 
+
+tryCatch({
+  if (api_key != "") { ggmap::register_google(key = api_key) }
+  center_lon <- mean(reunion_limits_long) 
+  center_lat <- mean(reunion_limits_lat)
+  reunion_map <- ggmap::get_googlemap(
+    center = c(lon = center_lon, lat = center_lat),
+    zoom = zoom_level, maptype = 'satellite', color = "color"
+  )
+}, error = function(e) { reunion_map <<- NULL })
+
+
+# --- 5. GGPLOT2 PLOT GENERATION ---
+
+# 5a. Panel 1: Phylogeny Plot (using ggtree)
+cat("Generating Panel 1: ggtree plot...\n")
+p_tree <- ggtree::ggtree(
+    p_tree_with_support, 
+    layout = "rectangular",
+    right = TRUE,
+    color = "gray40", # Base color
+    size = 0.9,       # Slightly thicker to show details
+    aes(linetype = line_type, alpha = line_alpha) # Map BOTH linetype and alpha
+) %<+% tree_data_for_ggtree +
+    ggtree::geom_tippoint(
+        aes(color = SPECIESclade3),
+        size = 2
+    ) +
+    # Manual Scales
+    ggplot2::scale_linetype_manual(values = c("solid" = 1, "dashed" = 2), guide = "none") +
+    ggplot2::scale_alpha_identity() + # Tells ggplot to use the literal value (1 or 0.4)
+    scale_color_manual(
+        values = pie_colors,
+        name = "Species Clade",
+        labels = legend_labels
+    ) +
+    ggplot2::labs(title = NULL) +
+    ggplot2::theme(
+        legend.position = "none",
+        plot.margin = unit(c(0.5, 0.2, 0.5, 0.5), "cm")
+    )
+
+
+# 5b. Panel 2: Map Plot
+cat("Generating Panel 2: Map plot...\n")
+if (!is.null(reunion_map) && inherits(reunion_map, "ggmap")) {
+  p_map <- ggmap(reunion_map, darken = c(0.1, "black")) 
+} else {
+  p_map <- ggplot() + 
+    geom_rect(
+      aes(xmin = reunion_limits_long[1], xmax = reunion_limits_long[2], 
+          ymin = reunion_limits_lat[1], ymax = reunion_limits_lat[2]), 
+      fill = "lightgray", color = "black"
+    )
+}
+
+p_map <- p_map +
+  geom_scatterpie(
+    data = pop_data_df, 
+    aes(x = long, y = lat, r = 0.007), 
+    cols = pie_clades, 
+    color = "white",
+    alpha = 0.9,
+    linewidth = 0.5
+  ) +
+  scale_fill_manual(
+    values = pie_colors, 
+    name = NULL,
+    labels = legend_labels 
+  ) +
+  labs(x = NULL, y = NULL, title = NULL) + 
+  theme_void() +
+  coord_fixed(
+    xlim = reunion_limits_long, 
+    ylim = reunion_limits_lat, 
+    expand = FALSE, 
+    ratio = 1/cos(mean(reunion_limits_lat) * pi/180)
+  ) + 
+  theme(
+    legend.position = c(0.85, 0.85), 
+    legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5), 
+    legend.title = element_text(face = "bold"), 
+    axis.text = element_blank(), 
+    axis.title = element_blank(), 
+    plot.margin = unit(c(0.5, 0.5, 0.5, 0.2), "cm") 
+  )
+
+
+# --- 6. PRINT ---
+cat("Combining and printing plots...\n")
+pdf("phylogeography_v14_DIAGNOSTIC.pdf", width = 11, height = 7)
+gridExtra::grid.arrange(p_tree, p_map, ncol = 2, widths = c(0.4, 0.6))
+dev.off()
+
+cat("\n✅ Final Plot Generated.\n")
+
+```
