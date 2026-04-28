@@ -1,0 +1,88 @@
+---
+title: "GENSPACEtutorial"
+author: "Marcial Escudero"
+date: "2023-05-30"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(GENESPACE)
+```
+
+
+Set the paths for your run. Change these paths to those valid on your system
+
+```{r}
+setwd("/home/amesclir/Documents/GITHUB/GENSPACE_Reunion/")
+genomeRepo <- "./rawGenomes"
+wd <- "./"
+path2mcscanx <- "~/local/bin/MCScanX/"
+
+```
+
+Download manually
+
+GENESPACE requires that fasta headers exactly match the fourth (ID) column in the bed file. Feel free to do this yourself, or use the GENESPACE function parse_annotations.
+
+```{r}
+
+
+
+
+library(GENESPACE)
+
+genomes2run <- c("Carex_boryana", "Carex_borbonica")
+
+# -- parse the annotations to fastas with headers that match a gene bed file
+parsedPaths <- parse_annotations(
+  rawGenomeRepo = genomeRepo, 
+  genomeDirs = genomes2run,
+  genomeIDs = genomes2run,
+  gffString = "gff3",
+  faString = "faa",
+  headerEntryIndex = 1, 
+  overwrite = F, 
+  headerSep=" ", 
+  gffIdColumn = "ID",
+  genespaceWd = wd)
+
+
+
+
+
+```
+
+
+The function init_genespace does most of the heavy lifting in terms of checking to make sure that the input data is OK. It also produces the correct directory structure and corresponding paths for the GENESPACE run. We have it as a separate function from the main pipeline run_genespace so that we can catch issues with input and give the user flexibility to alter input without re-running the full pipeline.
+
+```{r}
+gpar <- init_genespace(
+  wd = wd,
+  path2mcscanx = path2mcscanx)
+
+
+```
+
+Using default settings, depending on your machine, this can take a few minutes up to an hour.
+
+GENESPACE prints a ton of output. We don’t provide a mechanism to suppress this because it is crucial to make sure things are looking ok. There are some descriptions about the text printed to the console (see below output …)
+
+```{r}
+
+
+out <- run_genespace(gpar, overwrite = T)
+
+```
+
+If you have more than 2 genomes, plot_riparian give you access to an information-dense synteny map. See the riparian guide tutorial for more information.
+
+```{r}
+
+ripd <- plot_riparian(
+  gsParam = out,
+  refGenome = "Carex_boryana", 
+  useRegions = FALSE)
+
+```
