@@ -857,7 +857,7 @@ reunion_limits_long <- c(55.1, 55.9)
 reunion_limits_lat <- c(-21.4, -20.75) 
 reunion_map <- NULL
 zoom_level <- 10 # Adequate zoom level
-api_key <- "AIzaSyBAAyFPIOj1TKBWik1J0o5mg6mfVhdyJak" # Using empty string as provided for runtime key injection
+api_key <- "" # Using empty string as provided for runtime key injection
 
 cat(paste("Fetching Google Satellite map tiles (Zoom", zoom_level, ") with maximized island focus..."))
 tryCatch({
