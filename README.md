@@ -6,10 +6,7 @@ Overview
 This repository contains the scripts, pipelines, and code used to analyze the rapid ecological speciation between two sister Carex species (C. boryana and C. borbonica) on Réunion Island. The workflow includes de novo chromosome-level genome assembly, structural variant (SV) identification, whole-genome population genetics, introgression analysis, landscape genomics (RDA), and tests for purifying selection.
 Data Availability
 
-    Raw Sequencing Data (PacBio HiFi, Hi-C, and Illumina WGS): Available at NCBI SRA under BioProject PRJNA[Insert-BioProject-Number].
-
-    Genome Assemblies & Annotations: Available at NCBI GenBank under accessions [Insert-Accessions] and hosted on Zenodo: [Insert Zenodo Data Link].
-
+  
 Repository Structure & Workflow
 
 The repository is organized into directories corresponding to the major analytical steps described in the manuscript.
