@@ -20,9 +20,11 @@ library(data.table)
 #---------------------------------------------------#
 cat("Loading global datasets...\n")
 
-# Load the bioclimatic and structure data.
-# Note: Ensure this CSV contains the 'Species_Structure' column!
+# Load the bioclimatic data
 bioclim_data <- read.csv("final_df_for_analysis.csv")
+
+# Load the structure data for the partial RDA condition
+pop_data_struct <- read.table("population_list_pop1_2.txt", sep=" ", header = TRUE)
 
 # Define file paths
 raw_data_path <- "admixture_final_ld_pruned_filtered_for_RDA.raw"
@@ -89,37 +91,49 @@ for (target_chromosome in target_chromosomes) {
   cat("Final genetic data dimensions for Chr", target_chromosome, ":", dim(genetic_data_final), "\n")
   
   
-  # Align and Filter Data by Individuals
+  # --- Align and Filter Data by Individuals ---
   valid_bioclim_individuals <- complete.cases(bioclim_data)
   valid_genetic_individuals <- complete.cases(genetic_data_final)
-  common_valid_individuals <- intersect(bioclim_data$IND[valid_bioclim_individuals], rownames(genetic_data_final)[valid_genetic_individuals])
   
+  # Find common individuals across Bioclim, Genetics, AND the Population text file
+  common_valid_individuals <- intersect(bioclim_data$IND[valid_bioclim_individuals], rownames(genetic_data_final)[valid_genetic_individuals])
+  common_valid_individuals <- intersect(common_valid_individuals, pop_data_struct$IID)
+  
+  # Filter all three data frames to keep only these individuals
   bioclim_data_filtered <- bioclim_data[bioclim_data$IND %in% common_valid_individuals, ]
   genetic_data_final <- genetic_data_final[common_valid_individuals, ]
+  pop_filtered_struct <- pop_data_struct[pop_data_struct$IID %in% common_valid_individuals, , drop = FALSE]
   
+  # Order data frames to ensure perfect alignment
   bioclim_data_filtered <- bioclim_data_filtered[order(bioclim_data_filtered$IND), ]
   genetic_data_final <- genetic_data_final[order(rownames(genetic_data_final)), ]
+  pop_filtered_struct <- pop_filtered_struct[order(pop_filtered_struct$IID), , drop = FALSE]
+  
+  # Final check of alignment
   stopifnot(all(rownames(genetic_data_final) == bioclim_data_filtered$IND))
+  stopifnot(all(rownames(genetic_data_final) == pop_filtered_struct$IID))
+  cat("Final number of individuals for partial RDA:", nrow(genetic_data_final), "\n")
   
   
-  # Separate and scale the predictor variables (bioclimatic)
+  # --- Run the PARTIAL RDA Analysis ---
+  # Separate the predictor variables (bioclimatic) from the full data frame
   bioclim_predictors <- bioclim_data_filtered[, c(
     "wc2.1_30s_bio_1", "wc2.1_30s_bio_4", "wc2.1_30s_bio_12",
     "wc2.1_30s_bio_14", "wc2.1_30s_bio_16" 
   )]
   
-  # Scale bioclimatic variables and create the final environment dataframe
-  env_df <- as.data.frame(scale(bioclim_predictors))
+  # Scale and center the predictor variables
+  bioclim_scaled <- as.data.frame(scale(bioclim_predictors))
   
-  # Append the unscaled Species_Structure variable for conditioning
-  env_df$Species_Structure <- bioclim_data_filtered$Species_Structure
+  # Combine with Population Structure
+  env_df <- cbind(bioclim_scaled, Species_Structure = as.factor(pop_filtered_struct$POP))
   
-  
-  # Run the Partial RDA
   cat("Running Partial RDA for Chromosome", target_chromosome, "...\n")
   rda_result <- rda(genetic_data_final ~ wc2.1_30s_bio_1 + wc2.1_30s_bio_4 + 
-                    wc2.1_30s_bio_12 + wc2.1_30s_bio_14 + wc2.1_30s_bio_16 + 
-                    Condition(Species_Structure), data = env_df)
+                                         wc2.1_30s_bio_12 + wc2.1_30s_bio_14 + 
+                                         wc2.1_30s_bio_16 + 
+                                         Condition(Species_Structure), 
+                    data = env_df)
   
   # --- PRINT STATISTICS ---
   adj_r2 <- RsquareAdj(rda_result)
@@ -129,10 +143,9 @@ for (target_chromosome in target_chromosomes) {
   cat("\nANOVA Permutation test for Chromosome", target_chromosome, ":\n")
   anova_res <- anova.cca(rda_result, permutations = 999)
   print(anova_res)
-  # -----------------------------
   
   
-  # Export pRDA results for Python plotting
+  # --- Export pRDA results for Python plotting ---
   cat("\nExporting partial RDA results for Python plotting...\n")
   snp_scores_df <- as.data.frame(scores(rda_result, display = "species", choices = c(1, 2), scaling = 2))
   snp_scores_df$SNP_ID <- rownames(snp_scores_df)
